@@ -1,0 +1,337 @@
+name: Azure Terraform Deploy (Reusable)
+
+# ============================================================================
+# IMPORTANT: This is a REUSABLE WORKFLOW (Parent Workflow)
+# ============================================================================
+#
+# This file should be moved to: nathlan/.github-workflows/.github/workflows/azure-terraform-deploy.yml
+#
+# Once deployed to the central workflows repository, teams can call this workflow from their
+# own repositories to standardize Terraform deployments across the organization.
+#
+# See example-azure-terraform-child.yml for usage example.
+# ============================================================================
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Deployment environment (e.g., production, staging, development)'
+        required: true
+        type: string
+      terraform-version:
+        description: 'Terraform version to use'
+        required: false
+        type: string
+        default: '1.9.0'
+      working-directory:
+        description: 'Directory containing Terraform code'
+        required: false
+        type: string
+        default: 'terraform'
+      azure-region:
+        description: 'Azure region for deployment'
+        required: false
+        type: string
+        default: 'uksouth'
+    secrets:
+      AZURE_CLIENT_ID:
+        description: 'Azure Client ID for OIDC authentication'
+        required: true
+      AZURE_TENANT_ID:
+        description: 'Azure Tenant ID for OIDC authentication'
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        description: 'Azure Subscription ID for OIDC authentication'
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+  issues: write
+
+jobs:
+  # ============================================================================
+  # Job 1: Validate - Terraform formatting and validation
+  # ============================================================================
+  validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+
+      - name: Terraform Format Check
+        id: fmt
+        working-directory: ${{ inputs.working-directory }}
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        working-directory: ${{ inputs.working-directory }}
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        id: validate
+        working-directory: ${{ inputs.working-directory }}
+        run: terraform validate -no-color
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: TFLint Init
+        working-directory: ${{ inputs.working-directory }}
+        run: tflint --init
+
+      - name: Run TFLint
+        id: tflint
+        working-directory: ${{ inputs.working-directory }}
+        run: tflint --format=compact
+
+      - name: Comment Validation Results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
+            #### TFLint 📖\`${{ steps.tflint.outcome }}\`
+
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+  # ============================================================================
+  # Job 2: Security - Checkov security scanning
+  # ============================================================================
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Checkov
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install checkov
+
+      - name: Run Checkov
+        id: checkov
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          checkov --directory . \
+            --output cli \
+            --output junitxml \
+            --output-file-path console,checkov-report.xml \
+            --soft-fail false
+        continue-on-error: false
+
+      - name: Upload Checkov Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-report
+          path: ${{ inputs.working-directory }}/checkov-report.xml
+          retention-days: 30
+
+  # ============================================================================
+  # Job 3: Plan - Generate Terraform plan
+  # ============================================================================
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: [validate, security]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: ${{ inputs.working-directory }}
+        run: terraform init
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          terraform plan -no-color -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+          TF_VAR_azure_region: ${{ inputs.azure-region }}
+
+      - name: Save Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ inputs.environment }}
+          path: |
+            ${{ inputs.working-directory }}/tfplan
+            ${{ inputs.working-directory }}/plan.txt
+          retention-days: 30
+
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const planPath = '${{ inputs.working-directory }}/plan.txt';
+            const plan = fs.readFileSync(planPath, 'utf8');
+            const maxLength = 65000; // GitHub comment limit
+            const truncatedPlan = plan.length > maxLength
+              ? plan.substring(0, maxLength) + '\n\n... (truncated)'
+              : plan;
+
+            const output = `#### Terraform Plan 📖 for Environment: \`${{ inputs.environment }}\`
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${truncatedPlan}
+            \`\`\`
+
+            </details>
+
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Working Directory: \`${{ inputs.working-directory }}\`, Workflow: \`${{ github.workflow }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ============================================================================
+  # Job 4: Apply - Deploy infrastructure with approval gate
+  # ============================================================================
+  apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: plan
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ inputs.environment }}
+          path: ${{ inputs.working-directory }}
+
+      - name: Terraform Init
+        working-directory: ${{ inputs.working-directory }}
+        run: terraform init
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Terraform Apply
+        working-directory: ${{ inputs.working-directory }}
+        run: terraform apply -auto-approve tfplan
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+          TF_VAR_azure_region: ${{ inputs.azure-region }}
+
+      - name: Terraform Output
+        id: output
+        working-directory: ${{ inputs.working-directory }}
+        run: terraform output -json > outputs.json
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Upload Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ inputs.environment }}
+          path: ${{ inputs.working-directory }}/outputs.json
+          retention-days: 30
+
+      - name: Comment Apply Success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Apply ✅
+
+            Successfully deployed to environment: \`${{ inputs.environment }}\`
+
+            **Deployment Details:**
+            - Azure Region: \`${{ inputs.azure-region }}\`
+            - Terraform Version: \`${{ inputs.terraform-version }}\`
+            - Deployed by: @${{ github.actor }}
+            - Commit: \`${{ github.sha }}\`
+
+            Outputs have been saved as an artifact.`;
+
+            if (context.payload.pull_request) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              });
+            }

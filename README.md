@@ -81,9 +81,10 @@ Create an environment in your repository (e.g., `production`) with:
 ## Documentation
 
 For detailed usage instructions and troubleshooting, see:
+- **[Azure Managed Identity Setup Guide](docs/AZURE-MANAGED-IDENTITY-SETUP.md)** - Complete guide for setting up dual UAMIs with federated credentials
+- **[Migration Guide](docs/MIGRATION-GUIDE.md)** - Step-by-step guide for migrating from App Registration to Managed Identities
 - Workflow file comments in `.github/workflows/azure-terraform-deploy.yml`
 - Example implementation in `nathlan/.github-private` repository
-- Deployment guides in `docs/DEPLOYMENT.md` (if available)
 
 ## Support
 

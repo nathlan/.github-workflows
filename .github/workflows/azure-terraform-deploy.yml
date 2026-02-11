@@ -190,12 +190,12 @@ jobs:
         id: checkov
         working-directory: ${{ inputs.working-directory }}
         run: |
-          export CHECKOV_EXPERIMENTAL_TERRAFORM_MANAGED_MODULES=True \
-          checkov --directory .
+          export CHECKOV_EXPERIMENTAL_TERRAFORM_MANAGED_MODULES=True\
+          checkov --config-file checkov.yml
         continue-on-error: false
 
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         if: success() || failure()
         with:
           sarif_file: results.sarif

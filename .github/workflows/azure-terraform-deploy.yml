@@ -191,14 +191,14 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: |
           export CHECKOV_EXPERIMENTAL_TERRAFORM_MANAGED_MODULES=True
-          checkov --config-file checkov.yml
+          checkov --config-file ./checkov.yml
         continue-on-error: false
 
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@v3
         if: success() || failure()
         with:
-          sarif_file: results.sarif
+          sarif_file: ./results.sarif
 
   # ============================================================================
   # Job 3: Plan - Generate Terraform plan

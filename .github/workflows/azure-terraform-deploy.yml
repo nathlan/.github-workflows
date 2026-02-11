@@ -191,7 +191,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: |
           export CHECKOV_EXPERIMENTAL_TERRAFORM_MANAGED_MODULES=True
-          checkov --config-file checkov.yml
+          checkov
         continue-on-error: false
 
       - name: Upload SARIF file

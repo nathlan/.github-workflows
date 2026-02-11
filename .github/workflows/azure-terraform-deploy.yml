@@ -190,7 +190,7 @@ jobs:
         id: checkov
         working-directory: ${{ inputs.working-directory }}
         run: |
-          export CHECKOV_EXPERIMENTAL_TERRAFORM_MANAGED_MODULES=True\
+          export CHECKOV_EXPERIMENTAL_TERRAFORM_MANAGED_MODULES=True
           checkov --config-file checkov.yml
         continue-on-error: false
 

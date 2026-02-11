@@ -199,7 +199,7 @@ jobs:
         if: success() || failure()
         with:
           sarif_file: ${{ inputs.working-directory }}/results.sarif
-        fail-on-error: false
+        continue-on-error: true
 
   # ============================================================================
   # Job 3: Plan - Generate Terraform plan

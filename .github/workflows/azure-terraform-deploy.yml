@@ -195,11 +195,10 @@ jobs:
         continue-on-error: false
 
       - name: Upload SARIF file
-        working-directory: ${{ inputs.working-directory }}
         uses: github/codeql-action/upload-sarif@v3
         if: success() || failure()
         with:
-          sarif_file: results.sarif
+          sarif_file: ${{ inputs.working-directory }}/results.sarif
 
   # ============================================================================
   # Job 3: Plan - Generate Terraform plan

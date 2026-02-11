@@ -22,14 +22,16 @@ jobs:
       working-directory: terraform
       azure-region: uksouth
     secrets:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_ID_PLAN: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
+      AZURE_CLIENT_ID_APPLY: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 ```
 
 **Features:**
 
-- ✅ Azure OIDC authentication (no stored credentials)
+- ✅ Azure OIDC authentication with User-Assigned Managed Identities (no stored credentials)
+- ✅ Dual-identity security model (Reader for plan, Owner for apply)
 - ✅ Security scanning with Checkov (fails on violations)
 - ✅ TFLint validation
 - ✅ Plan artifact reuse (prevents drift)
@@ -45,9 +47,30 @@ jobs:
 
 **Required Secrets:**
 
-- `AZURE_CLIENT_ID` - Service principal client ID (OIDC)
+This workflow uses User-Assigned Managed Identities (UAMIs) with federated credentials for secure, credential-less authentication:
+
+- `AZURE_CLIENT_ID_PLAN` - Client ID of the UAMI with **Reader** role (for terraform plan)
+- `AZURE_CLIENT_ID_APPLY` - Client ID of the UAMI with **Owner** role (for terraform apply)
 - `AZURE_TENANT_ID` - Azure tenant ID
 - `AZURE_SUBSCRIPTION_ID` - Azure subscription ID
+
+**Authentication Model:**
+
+This workflow implements a dual-identity security model following the principle of least privilege:
+
+1. **Plan Identity (Reader Role)**: Used during `terraform plan` to assess changes. Has read-only access to Azure resources.
+2. **Apply Identity (Owner Role)**: Used during `terraform apply` to deploy changes. Has full access to create, modify, and delete resources.
+
+Each identity must be configured with federated credentials to trust your GitHub repository:
+- **Issuer**: `https://token.actions.githubusercontent.com`
+- **Subject**: `repo:<org>/<repo>:environment:<environment>` (or appropriate filter)
+- **Audience**: `api://AzureADTokenExchange`
+
+**Benefits:**
+- ✅ No secrets stored (only client IDs, which are not sensitive)
+- ✅ Least privilege access control
+- ✅ Separate audit trails for plan vs apply operations
+- ✅ Defense in depth - compromised plan job cannot modify infrastructure
 
 **Required Environment:**
 

@@ -10,6 +10,51 @@ name: Azure Terraform Deploy (Reusable)
 # own repositories to standardize Terraform deployments across the organization.
 #
 # See example-azure-terraform-child.yml for usage example.
+#
+# ============================================================================
+# AUTHENTICATION MODEL: User-Assigned Managed Identities with Federated Credentials
+# ============================================================================
+#
+# This workflow uses Azure User-Assigned Managed Identities (UAMIs) with federated credentials
+# for authentication instead of traditional app registrations (service principals).
+#
+# SECURITY MODEL: Principle of Least Privilege
+# --------------------------------------------
+# Each consuming repository must have TWO separate managed identities with different roles:
+#
+# 1. PLAN IDENTITY (Reader Role):
+#    - Used for: terraform init, terraform plan
+#    - Permission: Reader role at subscription/resource group scope
+#    - Purpose: Read-only access to assess what changes would be made
+#    - Secret: AZURE_CLIENT_ID_PLAN
+#
+# 2. APPLY IDENTITY (Owner Role):
+#    - Used for: terraform apply
+#    - Permission: Owner role at subscription/resource group scope
+#    - Purpose: Full access to create, modify, and delete Azure resources
+#    - Secret: AZURE_CLIENT_ID_APPLY
+#
+# FEDERATED CREDENTIALS SETUP:
+# ----------------------------
+# Both identities must be configured with federated credentials that trust your GitHub repository.
+# This enables OIDC authentication without storing any secrets (only client IDs).
+#
+# Example federated credential configuration for each UAMI:
+# - Issuer: https://token.actions.githubusercontent.com
+# - Subject: repo:<org>/<repo>:environment:<environment>  (or appropriate subject filter)
+# - Audience: api://AzureADTokenExchange
+#
+# BENEFITS:
+# ---------
+# ✅ No stored credentials - Client IDs are not sensitive
+# ✅ Least privilege - Plan uses read-only identity, apply uses elevated identity
+# ✅ Audit trail - Each identity's actions are tracked separately in Azure
+# ✅ Defense in depth - Compromised plan job cannot modify infrastructure
+#
+# REFERENCES:
+# -----------
+# - Microsoft Docs: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-identity
+# - Terraform Provider: https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/managed_service_identity
 # ============================================================================
 
 on:
@@ -35,8 +80,11 @@ on:
         type: string
         default: 'uksouth'
     secrets:
-      AZURE_CLIENT_ID:
-        description: 'Azure Client ID for OIDC authentication'
+      AZURE_CLIENT_ID_PLAN:
+        description: 'Azure User-Assigned Managed Identity Client ID for plan operations (Reader role)'
+        required: true
+      AZURE_CLIENT_ID_APPLY:
+        description: 'Azure User-Assigned Managed Identity Client ID for apply operations (Owner role)'
         required: true
       AZURE_TENANT_ID:
         description: 'Azure Tenant ID for OIDC authentication'
@@ -173,10 +221,10 @@ jobs:
         with:
           terraform_version: ${{ inputs.terraform-version }}
 
-      - name: Azure Login (OIDC)
+      - name: Azure Login (OIDC) - Plan Identity
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -184,7 +232,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: terraform init
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
@@ -196,7 +244,7 @@ jobs:
           terraform plan -no-color -out=tfplan
           terraform show -no-color tfplan > plan.txt
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
@@ -261,10 +309,10 @@ jobs:
         with:
           terraform_version: ${{ inputs.terraform-version }}
 
-      - name: Azure Login (OIDC)
+      - name: Azure Login (OIDC) - Apply Identity
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -278,7 +326,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: terraform init
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
@@ -287,7 +335,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: terraform apply -auto-approve tfplan
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
@@ -298,7 +346,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: terraform output -json > outputs.json
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true

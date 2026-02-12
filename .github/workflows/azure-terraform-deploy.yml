@@ -68,7 +68,7 @@ on:
         description: 'Terraform version to use'
         required: false
         type: string
-        default: '1.9.0'
+        default: 'latest'
       working-directory:
         description: 'Directory containing Terraform code'
         required: false

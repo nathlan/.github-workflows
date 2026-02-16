@@ -140,6 +140,8 @@ jobs:
       - name: TFLint Init
         working-directory: ${{ inputs.working-directory }}
         run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Run TFLint
         id: tflint
